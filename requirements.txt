@@ -1,4 +1,3 @@
- pyTelegramBotAPI
+pyTelegramBotAPI
 schedule
 pytz
-gunicorn
