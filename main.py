@@ -8,7 +8,9 @@ import os
 # ========================
 # Load Bot Token
 # ========================
+import os
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+
 CHAT_ID = 6444120693  # Your Telegram group ID
 
 bot = telebot.TeleBot(BOT_TOKEN)
