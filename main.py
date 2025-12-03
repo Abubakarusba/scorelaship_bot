@@ -6,12 +6,13 @@ import threading
 import os
 
 # ========================
-# Load Bot Token
+# Load Environment Variables
 # ========================
-import os
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID")  # Optional for testing; must be numeric if set
 
-CHAT_ID = 6444120693  # Your Telegram group ID
+if not BOT_TOKEN:
+    raise EnvironmentError("BOT_TOKEN missing from environment!")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -24,133 +25,109 @@ FOOTER = """
 Join our community 👉 [Click Here](https://chat.whatsapp.com/LwPfFoi2T2O6oXuRXpoZfd?mode=wwt)
 """
 
-# =====================================================
-# 📌 ROTATING CONTENT LISTS
-# =====================================================
-
-# ---------- Nigerian Scholarships ----------
+# ========================
+# Rotating Lists
+# ========================
 nigeria_list = [
-    """🇳🇬 *Nigerian Scholarship Update*\n
-*One Youth Young Leaders Scholarship 2025 – Fully Funded*\n
-• Scholarship worth ₦1m  
-• Tuition + Living Stipends  
-• 4.5 CGPA minimum  
-*Deadline:* Nov 30, 2025  
-[Apply Here](https://docs.google.com/forms/d/1UpUO6-q9bOJ8F6Qdjk00i7iRymK16047x6pui0oJrsM/viewform)
-""" + FOOTER,
-
-    """🇳🇬 *Nigerian Scholarship: MTN Foundation Scholarship 2025*\n
-• ₦300,000 yearly  
-• For STEM students  
-• Requires good academic performance  
-*Deadline:* December 15, 2025  
-[Apply](https://www.mtn.ng/scholarships)
-""" + FOOTER,
+    "🇳🇬 Nigerian Scholarship 1\nDetails..." + FOOTER,
+    "🇳🇬 Nigerian Scholarship 2\nDetails..." + FOOTER,
 ]
 
-# ---------- International Scholarships ----------
 international_list = [
-    """🌍 *International Scholarship Update*\n
-*Global Future Leaders Scholarship 2025 (Fully Funded)*\n
-• Full tuition  
-• Monthly stipend  
-• Visa & flight support  
-*Deadline:* Nov 30, 2025  
-[Apply](https://example.com/apply)
-""" + FOOTER,
-
-    """🌍 *Japanese Government MEXT Scholarship 2025*\n
-• Tuition fully covered  
-• Monthly stipend  
-• No IELTS required for many universities  
-*Deadline:* January 2026  
-[Apply](https://www.studyinjapan.go.jp)
-""" + FOOTER,
+    "🌍 International Scholarship 1\nDetails..." + FOOTER,
+    "🌍 International Scholarship 2\nDetails..." + FOOTER,
 ]
 
-# ---------- Tech Opportunities ----------
 tech_list = [
-    """💻 *Free Tech Opportunity – Verified*\n
-*Google Career Certificates (FREE via Scholarships)*\n
-• Data Analytics  
-• UX Design  
-• Cybersecurity  
-• IT Support  
-*Certificate by Google*  
-[Apply Free](https://www.coursera.org/google)
-""" + FOOTER,
-
-    """💻 *Microsoft Learn Cybersecurity Skilling Program* (100% Free)\n
-• Beginner friendly  
-• Cloud Security  
-• SOC Analyst  
-• Job-ready skills  
-[Join Here](https://learn.microsoft.com)
-""" + FOOTER,
+    "💻 Tech Opportunity 1\nDetails..." + FOOTER,
+    "💻 Tech Opportunity 2\nDetails..." + FOOTER,
 ]
 
-# =====================================================
-# 📌 FUNCTIONS TO SEND + ROTATE
-# =====================================================
-
-def pop_and_send(lst):
-    """Send first item and remove it to prevent repetition."""
+# ========================
+# Functions to send messages
+# ========================
+def pop_and_send(lst, chat_id):
     if not lst:
         return
     message = lst.pop(0)
-    bot.send_message(CHAT_ID, message, parse_mode="Markdown")
+    bot.send_message(chat_id, message, parse_mode="Markdown")
 
-def nigeria_scholarship():
-    pop_and_send(nigeria_list)
+def nigeria_scholarship(chat_id): pop_and_send(nigeria_list, chat_id)
+def international_scholarship(chat_id): pop_and_send(international_list, chat_id)
+def tech_opportunity(chat_id): pop_and_send(tech_list, chat_id)
 
-def international_scholarship():
-    pop_and_send(international_list)
-
-def tech_opportunity():
-    pop_and_send(tech_list)
-
-# =====================================================
-# 📌 Bot Commands
-# =====================================================
+# ========================
+# Bot Commands
+# ========================
+@bot.message_handler(commands=['getid'])
+def get_group_id(message):
+    """Return the chat ID and chat type."""
+    chat_id = message.chat.id
+    chat_type = message.chat.type  # 'private', 'group', 'supergroup'
+    print(f"[LOG] /getid used. Chat ID: {chat_id}, Type: {chat_type}")
+    bot.send_message(chat_id, f"Chat ID: {chat_id}\nChat Type: {chat_type}")
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.send_message(message.chat.id,
-        "👋 *Welcome to ScoreLaship Hub AI!*\n\n"
+    bot.send_message(
+        message.chat.id,
+        "👋 Welcome to ScoreLaship Hub AI!\n"
         "I post:\n"
         "🇳🇬 Nigerian Scholarships — 10:40 AM\n"
         "💻 Tech Opportunities — 1:30 PM\n"
-        "🌍 International Scholarships — 7:40 PM\n\n"
-        "Everything is *verified* and *never repeated*."
+        "🌍 International Scholarships — 7:40 PM"
     )
 
 @bot.message_handler(commands=['nigeria'])
 def manual_nigeria(message):
-    nigeria_scholarship()
+    nigeria_scholarship(message.chat.id)
 
 @bot.message_handler(commands=['international'])
 def manual_international(message):
-    international_scholarship()
+    international_scholarship(message.chat.id)
 
 @bot.message_handler(commands=['tech'])
 def manual_tech(message):
-    tech_opportunity()
+    tech_opportunity(message.chat.id)
 
-# =====================================================
-# 📌 Scheduler (Africa/Lagos)
-# =====================================================
+@bot.message_handler(commands=['testall'])
+def manual_test_all(message):
+    nigeria_scholarship(message.chat.id)
+    tech_opportunity(message.chat.id)
+    international_scholarship(message.chat.id)
+    bot.send_message(message.chat.id, "✅ All lists sent!")
+
+# ========================
+# Scheduler (Africa/Lagos)
+# ========================
 tz = pytz.timezone("Africa/Lagos")
 
-schedule.every().day.at("10:40").do(nigeria_scholarship)
-schedule.every().day.at("13:30").do(tech_opportunity)
-schedule.every().day.at("19:40").do(international_scholarship)
+def scheduled_messages():
+    target_id = int(GROUP_CHAT_ID) if GROUP_CHAT_ID else None
+    if target_id:
+        nigeria_scholarship(target_id)
+        tech_opportunity(target_id)
+        international_scholarship(target_id)
+
+schedule.every().day.at("10:40").do(lambda: nigeria_scholarship(int(GROUP_CHAT_ID)))
+schedule.every().day.at("13:30").do(lambda: tech_opportunity(int(GROUP_CHAT_ID)))
+schedule.every().day.at("19:40").do(lambda: international_scholarship(int(GROUP_CHAT_ID)))
 
 def run_scheduler():
     while True:
         schedule.run_pending()
         time.sleep(60)
 
-threading.Thread(target=run_scheduler).start()
+scheduler_thread = threading.Thread(target=run_scheduler)
+scheduler_thread.daemon = True
+scheduler_thread.start()
+
+# ========================
+# Debug all messages
+# ========================
+@bot.message_handler(func=lambda message: True)
+def log_all_messages(message):
+    print(f"[DEBUG] Received: {message.text} | Chat ID: {message.chat.id} | Type: {message.chat.type}")
 
 # ========================
 # Start bot
