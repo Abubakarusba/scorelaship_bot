@@ -48,10 +48,9 @@ def check_deadlines_and_cleanup():
 
             if deadline < now:
                 # Mark as TRUE so bot never posts it
-                sheet.update_cell(idx, row.keys().index("Posted") + 1, "TRUE")
+                sheet.update_cell(idx, list(row.keys()).index("Posted") + 1, "TRUE")
         except:
             continue
-
 
 def post_opportunities():
     """Post unposted opportunities to the Telegram channel."""
@@ -76,6 +75,19 @@ def post_opportunities():
         except Exception as e:
             print(f"Error sending message: {e}")
 
+# --------------------------
+# /testpost command
+# --------------------------
+@bot.message_handler(commands=['testpost'])
+def handle_testpost(message):
+    """Force the bot to post immediately."""
+    bot.send_message(message.chat.id, "⏳ Sending next available scholarship now...")
+    post_opportunities()
+    bot.send_message(message.chat.id, "✅ Done posting available scholarships!")
+
+# --------------------------
+# Scheduler
+# --------------------------
 def run_scheduler():
     schedule.every().day.at("08:30").do(post_opportunities)
 
@@ -83,6 +95,15 @@ def run_scheduler():
         schedule.run_pending()
         time.sleep(1)
 
-# Start bot
+# --------------------------
+# Start Bot
+# --------------------------
 print("Bot running...")
-run_scheduler()
+# Run scheduler in a separate thread
+import threading
+scheduler_thread = threading.Thread(target=run_scheduler)
+scheduler_thread.daemon = True
+scheduler_thread.start()
+
+# Start polling
+bot.infinity_polling()
