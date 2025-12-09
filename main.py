@@ -1,261 +1,203 @@
-#!/usr/bin/env python3
-# main.py — ScoreLaship Hub AI (Robust Version)
-
 import os
-import json
-import time
-import threading
-import traceback
-from datetime import datetime, date
+import requests
+import datetime
 import pytz
+from apscheduler.schedulers.background import BackgroundScheduler
+from bs4 import BeautifulSoup
 import telebot
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-from dateutil import parser as dateparser
-from difflib import SequenceMatcher
-import re
 
-# -----------------------------
-# CONFIG
-# -----------------------------
-TZ = pytz.timezone("Africa/Lagos")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-SA_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")  # full JSON content
-GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID")  # numeric string (optional)
-SPREADSHEET_ID = os.getenv("SPREADSHEET_ID", "18Ms7WOWiu0iKjTl_UCmncViL3j8Q1WR0da06VM8yulM")
-SHEET_NAME = os.getenv("SHEET_NAME", None)  # optional sheet name
+CHAT_ID = os.getenv("CHAT_ID", "YOUR_CHAT_ID")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-FOOTER = "\n\n🌐Share to your friends\n\nJoin our community: https://chat.whatsapp.com/LwPfFoi2T2O6oXuRXpoZfd?mode=wwt"
-POST_TIME_LOCAL = "08:30"
+# --------------------------------------------
+# 1. TRUSTED SCHOLARSHIP SOURCES
+# --------------------------------------------
+SOURCES = [
+    "https://www.scholarshipregion.com/aims-scholarship-program/",
+    "https://jobs.smartyacad.com/",
+    "https://www.ngscholars.net/",
+    "https://www.opportunitiesforafricans.com/",
+    "https://www.afterschoolafrica.com/",
+    "https://www.scholarshipair.com/",
+    "https://www.myschoolgist.com/ng/category/scholarships/",
+    "https://www.youthopportunities.com/tag/scholarships",
+    "https://opportunitiescorners.com/category/scholarships/",
+    "https://www.studentshubng.com/scholarships",
+    "https://nigerianscholars.com/scholarships/",
+    "https://www.fundsforngos.org/category/scholarships/",
+    "https://www.studyportals.com/scholarships/",
+    "https://www.chevening.org/scholarships/",
+    "https://www.daad.de/en/study-and-research-in-germany/scholarships/",
+    "https://www.fulbrightprogram.org/",
+    "https://www.alliance4africa.org/category/scholarship-opportunities/",
+    "https://www.topuniversities.com/student-info/scholarships",
+    "https://www.opportunitiescircle.com/category/scholarships/"
+]
 
-# -----------------------------
-# HELPERS
-# -----------------------------
-def truthy(v):
-    if isinstance(v, bool):
-        return v
-    if v is None:
-        return False
-    s = str(v).strip().upper()
-    return s in ("TRUE", "T", "1", "YES")
+# --------------------------------------------
+# 2. MANUAL SCHOLARSHIP LISTS (EDIT THESE)
+# --------------------------------------------
 
-def escape_markdown(text):
-    if not text:
-        return ""
-    escape_chars = r'_*[]()~`>#+-=|{}.!'
-    return re.sub(f"([{re.escape(escape_chars)}])", r"\\\1", text)
+NIGERIAN_SCHOLARSHIPS = [
+    # EXAMPLE
+    # {
+    #   "title": "NNPC Undergraduate Scholarship",
+    #   "requirements": "...",
+    #   "benefits": "...",
+    #   "criteria": "...",
+    #   "deadline": "2025-12-30",
+    #   "link": "https://example.com"
+    # }
+]
 
-def similar(a, b):
-    return SequenceMatcher(None, str(a).strip().lower(), str(b).strip().lower()).ratio()
+FREE_TECH_SCHOLARSHIPS = [
+    # Add Free Tech Opportunities Here
+]
 
-def parse_deadline(val):
-    if val is None or str(val).strip() == "":
-        return None
-    if isinstance(val, date):
-        return val
+INTERNATIONAL_SCHOLARSHIPS = [
+    # Add International Scholarships Here
+]
+
+# Track posted scholarships
+POSTED = set()
+
+# --------------------------------------------
+# 3. HELPERS
+# --------------------------------------------
+
+def parse_deadline(date_text):
     try:
-        s = str(val).strip()
-        return dateparser.parse(s, dayfirst=False).date()
+        date = datetime.datetime.strptime(date_text, "%Y-%m-%d").date()
+        if date <= datetime.date.today():
+            return None  # skip expired
+        return date
     except:
         return None
 
-def get_headers_map(sheet):
-    """Return dict mapping lowercase header names → column index (1-based)"""
-    headers = sheet.row_values(1)
-    return {h.strip().lower(): idx+1 for idx, h in enumerate(headers)}
+def format_message(item):
+    return (
+        f"📌 *{item['title']}*\n\n"
+        f"📍 *Requirements:* {item['requirements']}\n\n"
+        f"🎁 *Benefits:* {item['benefits']}\n\n"
+        f"📝 *Criteria:* {item['criteria']}\n\n"
+        f"⏰ *Deadline:* {item['deadline']}\n\n"
+        f"🔗 Apply Here: {item['link']}\n\n"
+        "──────────────\n"
+        "Shared by *ScoreLaship Hub* — empowering students with opportunities.\n"
+    )
 
-# -----------------------------
-# Google Sheets init
-# -----------------------------
-def init_sheet():
+# --------------------------------------------
+# 4. SCRAPER (LIGHTWEIGHT GENERIC)
+# --------------------------------------------
+
+def scrape_source(url):
     try:
-        svc_info = json.loads(SA_JSON)
+        print(f"Scraping: {url}")
+        r = requests.get(url, timeout=10)
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        items = []
+
+        # Generic find-like structure
+        posts = soup.find_all(["article", "div"], class_=lambda x: x and "post" in x.lower())
+
+        for p in posts[:5]:
+            title_tag = p.find(["h2", "h3"])
+            if not title_tag:
+                continue
+
+            title = title_tag.text.strip()
+            link = title_tag.find("a")["href"] if title_tag.find("a") else url
+
+            text = p.get_text(separator=" ").lower()
+
+            # Rough extraction
+            requirements = "Available on website"
+            benefits = "Available on website"
+            criteria = "See full details on the website"
+
+            # Try to detect dates
+            deadline = None
+            for word in text.split():
+                if "-" in word and len(word) == 10:
+                    if parse_deadline(word):
+                        deadline = word
+
+            if not deadline:
+                continue
+
+            items.append({
+                "title": title,
+                "requirements": requirements,
+                "benefits": benefits,
+                "criteria": criteria,
+                "deadline": deadline,
+                "link": link
+            })
+
+        return items
+
     except Exception as e:
-        print("[ERROR] Failed to parse GOOGLE_SERVICE_ACCOUNT_JSON:", e)
-        raise
-    scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(svc_info, scope)
-    client = gspread.authorize(creds)
-    if SHEET_NAME:
-        sh = client.open(SHEET_NAME)
-    else:
-        sh = client.open_by_key(SPREADSHEET_ID)
-    return sh.sheet1
-
-try:
-    sheet = init_sheet()
-    print("[OK] Google Sheet opened.")
-except Exception as e:
-    print("[ERROR] Could not open sheet:", e)
-    traceback.print_exc()
-    sheet = None
-
-# -----------------------------
-# Sheet utilities
-# -----------------------------
-def ensure_headers():
-    if not sheet:
-        return {}
-    headers_map = get_headers_map(sheet)
-    required_headers = ["category","title","benefit","criteria","requirement","deadline","link","posted"]
-    changed = False
-    for h in required_headers:
-        if h not in headers_map:
-            # append missing header
-            sheet.update_cell(1, len(headers_map)+1, h.capitalize())
-            changed = True
-            headers_map = get_headers_map(sheet)
-    if changed:
-        print("[SHEET] Added missing headers.")
-    return headers_map
-
-def get_all_records():
-    if not sheet:
+        print("Scraper Error:", e)
         return []
-    return sheet.get_all_records()
 
-def cleanup_expired():
-    if not sheet:
-        return
-    headers_map = get_headers_map(sheet)
-    if "posted" not in headers_map or "deadline" not in headers_map:
-        print("[CLEANUP] Required columns missing.")
-        return
-    rows = sheet.get_all_records()
-    today = datetime.now(TZ).date()
-    for i, row in enumerate(rows, start=2):
-        dl_raw = row.get("Deadline", "")
-        dl = parse_deadline(dl_raw)
-        if dl and dl < today:
-            if not truthy(row.get("Posted")):
-                try:
-                    sheet.update_cell(i, headers_map["posted"], "TRUE")
-                    print(f"[CLEANUP] Row {i} expired (deadline {dl_raw}) — marked Posted=TRUE")
-                except Exception as e:
-                    print("[CLEANUP] Failed to mark expired row", i, e)
+# --------------------------------------------
+# 5. PICK NEXT OPPORTUNITY
+# --------------------------------------------
 
-# -----------------------------
-# Posting logic
-# -----------------------------
-def find_next_unposted(category):
-    if not sheet:
-        return None, None
-    headers_map = get_headers_map(sheet)
-    rows = sheet.get_all_records()
-    for i, row in enumerate(rows, start=2):
-        cat = str(row.get("Category", "")).strip()
-        if similar(cat, category) > 0.8 and not truthy(row.get("Posted")):
-            return i, row
-    return None, None
+def get_next_scholarship(category_list):
+    for item in category_list:
+        if item["title"] not in POSTED:
+            deadline = parse_deadline(item["deadline"])
+            if deadline:
+                POSTED.add(item["title"])
+                return item
+    return None
 
-def format_message(row):
-    title = escape_markdown(row.get("Title", "No title"))
-    benefit = escape_markdown(row.get("Benefit", ""))
-    criteria = escape_markdown(row.get("Criteria", ""))
-    requirement = escape_markdown(row.get("Requirement", ""))
-    deadline = row.get("Deadline", "")
-    link = row.get("Link", "")
+# --------------------------------------------
+# 6. MAIN POSTING FUNCTION
+# --------------------------------------------
 
-    parts = [f"🎓 *{title}*"]
-    if benefit: parts.append(f"📌 *Benefit:* {benefit}")
-    if criteria: parts.append(f"📌 *Criteria:* {criteria}")
-    if requirement: parts.append(f"📌 *Requirement:* {requirement}")
-    if deadline: parts.append(f"⏳ *Deadline:* {deadline}")
-    if link: parts.append(f"\n🔗 Apply: {link}")
+def post_opportunity():
+    categories = [
+        ("Nigerian Scholarship", NIGERIAN_SCHOLARSHIPS),
+        ("Free Tech Opportunity", FREE_TECH_SCHOLARSHIPS),
+        ("International Scholarship", INTERNATIONAL_SCHOLARSHIPS)
+    ]
 
-    return "\n".join(parts) + FOOTER
+    for cat_name, cat_list in categories:
+        item = get_next_scholarship(cat_list)
+        if item:
+            bot.send_message(chat_id=CHAT_ID, text=format_message(item), parse_mode="Markdown")
+            return
 
-def mark_posted(row_index):
-    if not sheet:
-        return
-    headers_map = get_headers_map(sheet)
-    posted_col = headers_map.get("posted")
-    if posted_col:
-        sheet.update_cell(row_index, posted_col, "TRUE")
-        if "dateposted" in headers_map:
-            dp_col = headers_map["dateposted"]
-            sheet.update_cell(row_index, dp_col, datetime.now(TZ).date().isoformat())
+    # If all empty → scrape
+    for link in SOURCES:
+        scraped = scrape_source(link)
+        for item in scraped:
+            if item["title"] not in POSTED:
+                POSTED.add(item["title"])
+                bot.send_message(chat_id=CHAT_ID, text=format_message(item), parse_mode="Markdown")
+                return
 
-def post_next_for_category_to_chat(category, chat_id):
-    cleanup_expired()
-    row_idx, row = find_next_unposted(category)
-    if not row:
-        try:
-            bot.send_message(chat_id, f"⚠️ No more *{category.title()}* opportunities available.", parse_mode="Markdown")
-        except Exception as e:
-            print("[ERROR] failed to send 'no more' message:", e)
-        return False
+# --------------------------------------------
+# 7. SCHEDULER
+# --------------------------------------------
 
-    msg = format_message(row)
-    try:
-        bot.send_message(chat_id, msg, parse_mode="Markdown", disable_web_page_preview=False)
-        mark_posted(row_idx)
-        print(f"[POST] Posted row {row_idx} for category {category} to chat {chat_id}")
-        return True
-    except Exception as e:
-        print("[ERROR] send failed:", e)
-        traceback.print_exc()
-        return False
+def start_scheduler():
+    timezone = pytz.timezone("Africa/Lagos")
+    scheduler = BackgroundScheduler(timezone=timezone)
+    scheduler.add_job(post_opportunity, "cron", hour=9, minute=0)  # posts at 9:00 AM
+    scheduler.start()
+    print("Scheduler started for Africa/Lagos timezone")
 
-# -----------------------------
-# Bot commands
-# -----------------------------
-@bot.message_handler(commands=["start"])
-def cmd_start(m):
-    bot.send_message(m.chat.id, "🤖 ScoreLaship Hub AI active. Use /testpost to post the next available opportunity to this chat. Use /getid to get this chat ID.")
+# --------------------------------------------
+# 8. BOT START
+# --------------------------------------------
 
-@bot.message_handler(commands=["getid"])
-def cmd_getid(m):
-    bot.send_message(m.chat.id, f"Chat ID: `{m.chat.id}`\nType: `{m.chat.type}`", parse_mode="Markdown")
-
-@bot.message_handler(commands=["testpost"])
-def cmd_testpost(m):
-    chat_id = m.chat.id
-    bot.send_message(chat_id, "⏳ Sending next available scholarship to this chat now...")
-    if post_next_for_category_to_chat("nigeria", chat_id):
-        return
-    elif post_next_for_category_to_chat("tech", chat_id):
-        return
-    elif post_next_for_category_to_chat("international", chat_id):
-        return
-    else:
-        bot.send_message(chat_id, "⚠️ No unposted items found in these categories.")
-    bot.send_message(chat_id, "✅ Done (attempted posting).")
-
-# -----------------------------
-# Scheduler
-# -----------------------------
-def scheduled_job_runner():
-    print("[SCHED] Scheduler thread started, watching for", POST_TIME_LOCAL, "Africa/Lagos")
-    while True:
-        now_local = datetime.now(TZ)
-        hhmm = now_local.strftime("%H:%M")
-        if hhmm == POST_TIME_LOCAL:
-            print("[SCHED] Triggering scheduled post at", now_local.isoformat())
-            if GROUP_CHAT_ID:
-                try:
-                    gid = int(GROUP_CHAT_ID)
-                    post_next_for_category_to_chat("nigeria", gid)
-                    post_next_for_category_to_chat("tech", gid)
-                    post_next_for_category_to_chat("international", gid)
-                except Exception as e:
-                    print("[SCHED] GROUP_CHAT_ID invalid or send failed:", e)
-            time.sleep(61)
-        time.sleep(10)
-
-# -----------------------------
-# Startup
-# -----------------------------
-if sheet:
-    ensure_headers()
-    print("[STARTUP] Sample rows (first 3):", sheet.get_all_records()[:3])
-else:
-    print("[STARTUP] Sheet not available; commands will fail.")
-
-sched_thread = threading.Thread(target=scheduled_job_runner, daemon=True)
-sched_thread.start()
-
-print("🤖 ScoreLaship Hub AI is ACTIVE!")
-bot.infinity_polling()
+if __name__ == "__main__":
+    print("Bot running...")
+    start_scheduler()
+    bot.infinity_polling()
