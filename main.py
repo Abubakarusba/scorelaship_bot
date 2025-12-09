@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-# main.py — ScoreLaship Hub AI (Google Sheets powered)
-# Requirements: pyTelegramBotAPI, gspread, oauth2client, python-dateutil, pytz, schedule
+# main.py — ScoreLaship Hub AI (Robust Version)
 
 import os
 import json
@@ -13,6 +12,8 @@ import telebot
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from dateutil import parser as dateparser
+from difflib import SequenceMatcher
+import re
 
 # -----------------------------
 # CONFIG
@@ -20,25 +21,50 @@ from dateutil import parser as dateparser
 TZ = pytz.timezone("Africa/Lagos")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 SA_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")  # full JSON content
-GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID")  # numeric string (optional for testing)
-# You gave this Spreadsheet ID — embedded here. If you prefer env var, set SPREADSHEET_ID env.
+GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID")  # numeric string (optional)
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID", "18Ms7WOWiu0iKjTl_UCmncViL3j8Q1WR0da06VM8yulM")
-SHEET_NAME = os.getenv("SHEET_NAME", None)  # optional sheet name; default first sheet
-
-# Quick validations
-print("[STARTUP] BOT_TOKEN present:", bool(BOT_TOKEN))
-print("[STARTUP] GOOGLE_SERVICE_ACCOUNT_JSON present:", bool(SA_JSON))
-print("[STARTUP] SPREADSHEET_ID:", SPREADSHEET_ID)
-print("[STARTUP] GROUP_CHAT_ID present:", bool(GROUP_CHAT_ID))
-
-if not BOT_TOKEN:
-    raise EnvironmentError("BOT_TOKEN missing from environment.")
-if not SA_JSON:
-    raise EnvironmentError("GOOGLE_SERVICE_ACCOUNT_JSON missing from environment.")
-if not SPREADSHEET_ID:
-    raise EnvironmentError("SPREADSHEET_ID missing (set env SPREADSHEET_ID or embed in code).")
+SHEET_NAME = os.getenv("SHEET_NAME", None)  # optional sheet name
 
 bot = telebot.TeleBot(BOT_TOKEN)
+
+FOOTER = "\n\n🌐Share to your friends\n\nJoin our community: https://chat.whatsapp.com/LwPfFoi2T2O6oXuRXpoZfd?mode=wwt"
+POST_TIME_LOCAL = "08:30"
+
+# -----------------------------
+# HELPERS
+# -----------------------------
+def truthy(v):
+    if isinstance(v, bool):
+        return v
+    if v is None:
+        return False
+    s = str(v).strip().upper()
+    return s in ("TRUE", "T", "1", "YES")
+
+def escape_markdown(text):
+    if not text:
+        return ""
+    escape_chars = r'_*[]()~`>#+-=|{}.!'
+    return re.sub(f"([{re.escape(escape_chars)}])", r"\\\1", text)
+
+def similar(a, b):
+    return SequenceMatcher(None, str(a).strip().lower(), str(b).strip().lower()).ratio()
+
+def parse_deadline(val):
+    if val is None or str(val).strip() == "":
+        return None
+    if isinstance(val, date):
+        return val
+    try:
+        s = str(val).strip()
+        return dateparser.parse(s, dayfirst=False).date()
+    except:
+        return None
+
+def get_headers_map(sheet):
+    """Return dict mapping lowercase header names → column index (1-based)"""
+    headers = sheet.row_values(1)
+    return {h.strip().lower(): idx+1 for idx, h in enumerate(headers)}
 
 # -----------------------------
 # Google Sheets init
@@ -49,7 +75,6 @@ def init_sheet():
     except Exception as e:
         print("[ERROR] Failed to parse GOOGLE_SERVICE_ACCOUNT_JSON:", e)
         raise
-
     scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(svc_info, scope)
     client = gspread.authorize(creds)
@@ -57,8 +82,7 @@ def init_sheet():
         sh = client.open(SHEET_NAME)
     else:
         sh = client.open_by_key(SPREADSHEET_ID)
-    sheet = sh.sheet1
-    return sheet
+    return sh.sheet1
 
 try:
     sheet = init_sheet()
@@ -69,76 +93,36 @@ except Exception as e:
     sheet = None
 
 # -----------------------------
-# Footer & settings
+# Sheet utilities
 # -----------------------------
-FOOTER = "\n\n🌐Share to your friends\n\nJoin our community: https://chat.whatsapp.com/LwPfFoi2T2O6oXuRXpoZfd?mode=wwt"
-POST_TIME_LOCAL = "08:30"  # Lagos local time (HH:MM)
-
-# Exact expected headers (capitalization matters)
-REQUIRED_HEADERS = ["Category", "Title", "Benefit", "Criteria", "Requirement", "Deadline", "Link", "Posted"]
-
-# -----------------------------
-# Helpers
-# -----------------------------
-def truthy(v):
-    if isinstance(v, bool):
-        return v
-    if v is None:
-        return False
-    s = str(v).strip().upper()
-    return s in ("TRUE", "T", "1", "YES")
-
 def ensure_headers():
-    """Ensure the sheet has the exact header row; add missing headers at end if needed."""
     if not sheet:
-        return []
-    headers = sheet.row_values(1)
-    headers = [h.strip() for h in headers]
+        return {}
+    headers_map = get_headers_map(sheet)
+    required_headers = ["category","title","benefit","criteria","requirement","deadline","link","posted"]
     changed = False
-    for h in REQUIRED_HEADERS:
-        if h not in headers:
-            headers.append(h)
+    for h in required_headers:
+        if h not in headers_map:
+            # append missing header
+            sheet.update_cell(1, len(headers_map)+1, h.capitalize())
             changed = True
+            headers_map = get_headers_map(sheet)
     if changed:
-        # overwrite header row
-        sheet.delete_row(1)
-        sheet.insert_row(headers, 1)
-        print("[SHEET] Header row updated to include required headers.")
-    else:
-        print("[SHEET] Headers OK:", headers)
-    return headers
-
-def parse_deadline(val):
-    if val is None or str(val).strip() == "":
-        return None
-    if isinstance(val, date):
-        return val
-    s = str(val).strip()
-    try:
-        d = dateparser.parse(s, dayfirst=False).date()
-        return d
-    except Exception:
-        return None
+        print("[SHEET] Added missing headers.")
+    return headers_map
 
 def get_all_records():
     if not sheet:
         return []
     return sheet.get_all_records()
 
-# -----------------------------
-# Cleanup expired rows
-# -----------------------------
 def cleanup_expired():
-    """Mark rows with Deadline < today as Posted = TRUE (so they never post)."""
     if not sheet:
         return
-    headers = sheet.row_values(1)
-    if "Posted" not in headers or "Deadline" not in headers:
+    headers_map = get_headers_map(sheet)
+    if "posted" not in headers_map or "deadline" not in headers_map:
         print("[CLEANUP] Required columns missing.")
         return
-    posted_col = headers.index("Posted") + 1
-    deadline_col = headers.index("Deadline") + 1
-
     rows = sheet.get_all_records()
     today = datetime.now(TZ).date()
     for i, row in enumerate(rows, start=2):
@@ -147,67 +131,52 @@ def cleanup_expired():
         if dl and dl < today:
             if not truthy(row.get("Posted")):
                 try:
-                    sheet.update_cell(i, posted_col, "TRUE")
+                    sheet.update_cell(i, headers_map["posted"], "TRUE")
                     print(f"[CLEANUP] Row {i} expired (deadline {dl_raw}) — marked Posted=TRUE")
                 except Exception as e:
                     print("[CLEANUP] Failed to mark expired row", i, e)
 
 # -----------------------------
-# Find next unposted item for a category
+# Posting logic
 # -----------------------------
 def find_next_unposted(category):
     if not sheet:
         return None, None
-    headers = sheet.row_values(1)
+    headers_map = get_headers_map(sheet)
     rows = sheet.get_all_records()
     for i, row in enumerate(rows, start=2):
-        cat = str(row.get("Category", "")).strip().lower()
-        if cat == category.lower() and not truthy(row.get("Posted")):
+        cat = str(row.get("Category", "")).strip()
+        if similar(cat, category) > 0.8 and not truthy(row.get("Posted")):
             return i, row
     return None, None
 
-# -----------------------------
-# Post formatting & sending
-# -----------------------------
 def format_message(row):
-    title = row.get("Title", "No title")
-    benefit = row.get("Benefit", "")
-    criteria = row.get("Criteria", "")
-    requirement = row.get("Requirement", "")
+    title = escape_markdown(row.get("Title", "No title"))
+    benefit = escape_markdown(row.get("Benefit", ""))
+    criteria = escape_markdown(row.get("Criteria", ""))
+    requirement = escape_markdown(row.get("Requirement", ""))
     deadline = row.get("Deadline", "")
     link = row.get("Link", "")
 
     parts = [f"🎓 *{title}*"]
-    if benefit:
-        parts.append(f"📌 *Benefit:* {benefit}")
-    if criteria:
-        parts.append(f"📌 *Criteria:* {criteria}")
-    if requirement:
-        parts.append(f"📌 *Requirement:* {requirement}")
-    if deadline:
-        parts.append(f"⏳ *Deadline:* {deadline}")
-    if link:
-        parts.append(f"\n🔗 Apply: {link}")
+    if benefit: parts.append(f"📌 *Benefit:* {benefit}")
+    if criteria: parts.append(f"📌 *Criteria:* {criteria}")
+    if requirement: parts.append(f"📌 *Requirement:* {requirement}")
+    if deadline: parts.append(f"⏳ *Deadline:* {deadline}")
+    if link: parts.append(f"\n🔗 Apply: {link}")
 
-    msg = "\n".join(parts) + FOOTER
-    return msg
+    return "\n".join(parts) + FOOTER
 
 def mark_posted(row_index):
     if not sheet:
         return
-    headers = sheet.row_values(1)
-    try:
-        posted_col = headers.index("Posted") + 1
-    except ValueError:
-        return
-    try:
+    headers_map = get_headers_map(sheet)
+    posted_col = headers_map.get("posted")
+    if posted_col:
         sheet.update_cell(row_index, posted_col, "TRUE")
-        # write DatePosted column if exists or append DatePosted column
-        if "DatePosted" in headers:
-            dp_col = headers.index("DatePosted") + 1
+        if "dateposted" in headers_map:
+            dp_col = headers_map["dateposted"]
             sheet.update_cell(row_index, dp_col, datetime.now(TZ).date().isoformat())
-    except Exception as e:
-        print("[ERROR] mark_posted failed:", e)
 
 def post_next_for_category_to_chat(category, chat_id):
     cleanup_expired()
@@ -243,40 +212,20 @@ def cmd_getid(m):
 
 @bot.message_handler(commands=["testpost"])
 def cmd_testpost(m):
-    """Post next available item — sends to the chat where the command was called."""
     chat_id = m.chat.id
     bot.send_message(chat_id, "⏳ Sending next available scholarship to this chat now...")
-    # Try categories in order: nigeria, tech, international
     if post_next_for_category_to_chat("nigeria", chat_id):
-        pass
+        return
     elif post_next_for_category_to_chat("tech", chat_id):
-        pass
+        return
     elif post_next_for_category_to_chat("international", chat_id):
-        pass
+        return
     else:
         bot.send_message(chat_id, "⚠️ No unposted items found in these categories.")
     bot.send_message(chat_id, "✅ Done (attempted posting).")
 
-@bot.message_handler(commands=["testall"])
-def cmd_testall(m):
-    """Post all unposted (careful) — for testing only."""
-    chat_id = m.chat.id
-    bot.send_message(chat_id, "⏳ Sending all unposted opportunities now...")
-    records = get_all_records()
-    posted_any = False
-    for idx, row in enumerate(records, start=2):
-        if not truthy(row.get("Posted")):
-            msg = format_message(row)
-            try:
-                bot.send_message(chat_id, msg, parse_mode="Markdown")
-                sheet.update_cell(idx, sheet.row_values(1).index("Posted") + 1, "TRUE")
-                posted_any = True
-            except Exception as e:
-                print("[ERROR] testall send failed:", e)
-    bot.send_message(chat_id, "✅ Done. Posted any unposted items." if posted_any else "⚠️ No unposted items to post.")
-
 # -----------------------------
-# Scheduler loop (checks local Lagos time)
+# Scheduler
 # -----------------------------
 def scheduled_job_runner():
     print("[SCHED] Scheduler thread started, watching for", POST_TIME_LOCAL, "Africa/Lagos")
@@ -288,15 +237,11 @@ def scheduled_job_runner():
             if GROUP_CHAT_ID:
                 try:
                     gid = int(GROUP_CHAT_ID)
-                    # post one per category
                     post_next_for_category_to_chat("nigeria", gid)
                     post_next_for_category_to_chat("tech", gid)
                     post_next_for_category_to_chat("international", gid)
                 except Exception as e:
                     print("[SCHED] GROUP_CHAT_ID invalid or send failed:", e)
-            else:
-                print("[SCHED] GROUP_CHAT_ID not set — scheduled job skipped.")
-            # avoid double-run in same minute
             time.sleep(61)
         time.sleep(10)
 
