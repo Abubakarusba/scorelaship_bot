@@ -39,26 +39,53 @@ SOURCES = [
 # --------------------------------------------
 # 2. MANUAL SCHOLARSHIP LISTS (EDIT THESE)
 # --------------------------------------------
+# -----------------------------
+# MANUAL SCHOLARSHIP LISTS
+# -----------------------------
 
 NIGERIAN_SCHOLARSHIPS = [
-    # EXAMPLE
-    # {
-    #   "title": "NNPC Undergraduate Scholarship",
-    #   "requirements": "...",
-    #   "benefits": "...",
-    #   "criteria": "...",
-    #   "deadline": "2025-12-30",
-    #   "link": "https://example.com"
-    # }
+    # Add Nigerian scholarships here (if any)
 ]
 
 FREE_TECH_SCHOLARSHIPS = [
-    # Add Free Tech Opportunities Here
+    # Add Free Tech scholarships here (if any)
 ]
 
 INTERNATIONAL_SCHOLARSHIPS = [
-    # Add International Scholarships Here
+    {
+        "title": "2026 UM Global Studies Scholarship in Netherlands For Undergraduates | Fully Funded",
+        "requirements": "Undergraduate students from all countries",
+        "benefits": "Full Scholarship with €15,930 stipend per year, Travel Costs & Accommodation",
+        "criteria": "Undergraduate Study",
+        "deadline": "2026-02-01",
+        "link": "https://www.scholarshipregion.com/um-global-studies-scholarship/"
+    },
+    {
+        "title": "University of Idaho Masters Scholarship in USA 2026",
+        "requirements": "All Countries eligible for Masters Study",
+        "benefits": "",
+        "criteria": "Masters Study",
+        "deadline": "2025-12-15",
+        "link": "https://www.scholarshipregion.com/university-of-idaho-masters-scholarship/"
+    },
+    {
+        "title": "Jim Leech Mastercard Foundation Fellowship For Students & Graduates 2026 | $15,000 Opportunity",
+        "requirements": "African Countries eligible",
+        "benefits": "$15,000 Fellowship",
+        "criteria": "Competitions",
+        "deadline": "2025-12-15",
+        "link": "https://www.scholarshipregion.com/jim-leech-mastercard-foundation-fellowship/"
+    },
+    {
+        "title": "OECD Young Associate Program 2026 (Paid Opportunity)",
+        "requirements": "All Countries eligible",
+        "benefits": "Paid Internship/Training",
+        "criteria": "Internships | Training",
+        "deadline": "2025-12-14",
+        "link": "https://www.scholarshipregion.com/oecd-young-associate-program/"
+    }
 ]
+
 
 # Track posted scholarships
 POSTED = set()
