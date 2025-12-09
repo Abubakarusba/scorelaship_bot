@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 import telebot
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID", "YOUR_CHAT_ID")
+GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID", "YOUR_GROUP_CHAT_ID")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
