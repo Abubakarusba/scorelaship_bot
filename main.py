@@ -139,6 +139,18 @@ async def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     # Handlers
+    from telegram import Update
+from telegram.ext import ContextTypes, CommandHandler
+
+# Command to fetch chat ID
+async def getid(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.message.chat.id
+    chat_type = update.message.chat.type
+    await update.message.reply_text(
+        f"Chat ID: `{chat_id}`\nType: `{chat_type}`",
+        parse_mode="Markdown"
+    )
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("add", add))
     app.add_handler(CommandHandler("list", list_opps))
