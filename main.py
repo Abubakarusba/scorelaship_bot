@@ -15,6 +15,16 @@ from dateutil import parser as dateparser
 from difflib import SequenceMatcher
 import re
 
+import telebot
+
+bot = telebot.TeleBot(BOT_TOKEN)
+
+try:
+    info = bot.get_me()
+    print("[DEBUG] Bot connected successfully:", info.username)
+except Exception as e:
+    print("[ERROR] Bot failed to connect:", e)
+
 # -----------------------------
 # CONFIG
 # -----------------------------
