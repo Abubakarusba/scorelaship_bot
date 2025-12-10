@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# main.py — ScoreLaship Hub AI (JSON version)
+# ScoreLaship Hub AI — auto-detect GROUP_ID version
 
 import os
 import json
@@ -14,7 +14,6 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 # CONFIG
 # -----------------------------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-GROUP_ID = int(os.getenv("GROUP_ID", 0))  # must be numeric
 DATA_FILE = os.getenv("DATA_FILE", "data.json")
 POST_HOUR = 8   # 24-hour format
 POST_MINUTE = 30
@@ -36,13 +35,13 @@ logger = logging.getLogger(__name__)
 def load_data():
     if not os.path.exists(DATA_FILE):
         with open(DATA_FILE, "w") as f:
-            json.dump({"opportunities": []}, f)
+            json.dump({"opportunities": [], "group_id": None}, f)
     try:
         with open(DATA_FILE, "r") as f:
             return json.load(f)
     except Exception as e:
         logger.error("Failed to read JSON: %s", e)
-        return {"opportunities": []}
+        return {"opportunities": [], "group_id": None}
 
 def save_data(data):
     try:
@@ -65,15 +64,16 @@ def format_opportunity(opp):
 # COMMAND HANDLERS
 # -----------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🤖 ScoreLaship Hub AI active.\n"
-        "Commands available:\n"
-        "/getid - Get this chat ID\n"
-        "/list - List all opportunities\n"
-        "/nigeria - List Nigeria opportunities\n"
-        "/tech - List Tech opportunities\n"
-        "/international - List International opportunities"
-    )
+    chat_id = update.message.chat.id
+    chat_type = update.message.chat.type
+    data = load_data()
+    if chat_type in ("group", "supergroup") and not data.get("group_id"):
+        data["group_id"] = chat_id
+        save_data(data)
+        logger.info(f"Detected and saved GROUP_ID: {chat_id}")
+        await update.message.reply_text(f"✅ Group detected and saved. GROUP_ID = {chat_id}")
+    else:
+        await update.message.reply_text("🤖 ScoreLaship Hub AI active. Use /getid to get this chat ID.\nAvailable commands:\n/list\n/nigeria\n/tech\n/international")
 
 async def getid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat.id
@@ -90,7 +90,7 @@ async def list_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not opportunities:
         await update.message.reply_text("⚠️ No opportunities found.")
         return
-    for opp in opportunities[:5]:  # first 5 for demo
+    for opp in opportunities[:5]:
         await update.message.reply_text(format_opportunity(opp))
 
 async def category_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, category: str):
@@ -99,7 +99,7 @@ async def category_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, categ
     if not opps:
         await update.message.reply_text(f"⚠️ No {category.title()} opportunities available.")
         return
-    for opp in opps[:5]:  # first 5 for demo
+    for opp in opps[:5]:
         await update.message.reply_text(format_opportunity(opp))
 
 async def nigeria(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -124,15 +124,19 @@ async def scheduled_post(app):
         await asyncio.sleep(wait_seconds)
         logger.info("Running scheduled post...")
         data = load_data()
+        group_id = data.get("group_id")
+        if not group_id:
+            logger.warning("No group ID detected yet, skipping scheduled post.")
+            continue
         for category in ["nigeria", "tech", "international"]:
             opps = filter_category(data, category)
             for opp in opps:
                 try:
-                    await app.bot.send_message(GROUP_ID, format_opportunity(opp))
-                    logger.info(f"Posted {category} opportunity to group {GROUP_ID}")
+                    await app.bot.send_message(group_id, format_opportunity(opp))
+                    logger.info(f"Posted {category} opportunity to group {group_id}")
                 except Exception as e:
                     logger.error("Failed to post scheduled message: %s", e)
-        await asyncio.sleep(60)  # wait a bit to avoid double-posting
+        await asyncio.sleep(60)
 
 # -----------------------------
 # MAIN
