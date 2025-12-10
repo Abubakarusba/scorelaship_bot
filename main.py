@@ -1,5 +1,5 @@
-so, what happen that the bot is not respodning after testig it? #!/usr/bin/env python3
-# main.py — ScoreLaship Hub AI (Robust Version)
+#!/usr/bin/env python3
+# main.py — ScoreLaship Hub AI (Text JSON Version)
 
 import os
 import json
@@ -20,7 +20,7 @@ import re
 # -----------------------------
 TZ = pytz.timezone("Africa/Lagos")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-SA_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")  # full JSON content
+SA_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")  # full JSON content as TEXT
 GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID")  # numeric string (optional)
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID", "18Ms7WOWiu0iKjTl_UCmncViL3j8Q1WR0da06VM8yulM")
 SHEET_NAME = os.getenv("SHEET_NAME", None)  # optional sheet name
@@ -71,6 +71,7 @@ def get_headers_map(sheet):
 # -----------------------------
 def init_sheet():
     try:
+        # Load JSON from TEXT environment variable
         svc_info = json.loads(SA_JSON)
     except Exception as e:
         print("[ERROR] Failed to parse GOOGLE_SERVICE_ACCOUNT_JSON:", e)
@@ -103,7 +104,6 @@ def ensure_headers():
     changed = False
     for h in required_headers:
         if h not in headers_map:
-            # append missing header
             sheet.update_cell(1, len(headers_map)+1, h.capitalize())
             changed = True
             headers_map = get_headers_map(sheet)
@@ -258,4 +258,4 @@ sched_thread = threading.Thread(target=scheduled_job_runner, daemon=True)
 sched_thread.start()
 
 print("🤖 ScoreLaship Hub AI is ACTIVE!")
-bot.infinity_polling() what is the major possible errors, since my bot token, group chat id, spreadsheet id, google seervice account, are all correct
+bot.infinity_polling()
