@@ -1,132 +1,174 @@
+#!/usr/bin/env python3
+# ScoreLaship Hub — DM Opportunity Bot
+
 import os
-import logging
-import datetime
+import json
+import traceback
+import telebot
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
-from telegram import ParseMode
+from datetime import datetime, date
+from dateutil import parser as dateparser
+from difflib import SequenceMatcher
+import pytz
 
-# ===========================
-#  DEBUG MODE ENABLED
-# ===========================
-logging.basicConfig(
-    format='[%(levelname)s] %(asctime)s → %(message)s',
-    level=logging.DEBUG
-)
-
-# ===========================
-# GOOGLE SHEET SETUP
-# ===========================
-SCOPE = [
-    "https://spreadsheets.google.com/feeds",
-    "https://www.googleapis.com/auth/drive"
-]
-
-CREDS = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", SCOPE)
-CLIENT = gspread.authorize(CREDS)
-
-SHEET = CLIENT.open("ScholarshipDB").sheet1
-
-# ===========================
-#  SETTINGS
-# ===========================
-KEYWORDS = ["nigeria", "tech", "international"]
-SPAM_WORDS = ["win", "loan", "bet", "credit", "sugar mummy", "investment"]
-
-GROUP_ID = -100123456789  # <<< Replace with your group ID
-
+# ----------------------
+# CONFIG
+# ----------------------
+TZ = pytz.timezone("Africa/Lagos")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+SA_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")  # JSON text
+SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 
-# ===========================
-#  CLEAN DATA FUNCTION
-# ===========================
-def get_clean_data():
+bot = telebot.TeleBot(BOT_TOKEN)
+
+# ----------------------
+# Helpers
+# ----------------------
+def similar(a, b):
+    return SequenceMatcher(None, str(a).lower(), str(b).lower()).ratio()
+
+def truthy(v):
+    s = str(v).strip().lower()
+    return s in ("true", "yes", "1")
+
+def parse_deadline(val):
+    if not val:
+        return None
     try:
-        rows = SHEET.get_all_values()
+        return dateparser.parse(str(val)).date()
+    except:
+        return None
 
-        clean = []
-        for row in rows[1:]:  # Skip header
-            row = row[1:]     # IGNORE column 1 (timestamp)
-            if len(row) < 4:
-                continue
-            clean.append(row)
-
-        return clean
+# ----------------------
+# Google Sheet Init
+# ----------------------
+def init_sheet():
+    try:
+        svc_info = json.loads(SA_JSON)
     except Exception as e:
-        logging.error(f"Error reading sheet: {e}")
+        print("[ERROR] Failed parsing JSON:", e)
+        return None
+
+    scope = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(svc_info, scope)
+    client = gspread.authorize(creds)
+
+    try:
+        sh = client.open_by_key(SPREADSHEET_ID)
+        print("[OK] Sheet opened")
+        return sh.sheet1
+    except Exception as e:
+        print("[ERROR] Could not open sheet:", e)
+        traceback.print_exc()
+        return None
+
+sheet = init_sheet()
+
+# ----------------------
+# Sheet Utilities
+# ----------------------
+def get_headers_map():
+    if not sheet:
+        return {}
+    headers = sheet.row_values(1)
+    return {h.strip().lower(): i+1 for i, h in enumerate(headers)}
+
+def get_all_data():
+    """Fetch sheet records safely."""
+    if not sheet:
+        return []
+    try:
+        data = sheet.get_all_records()
+        return data
+    except Exception as e:
+        print("[ERROR] get_all_records failed:", e)
         return []
 
-# ===========================
-#  DAILY AUTO POST
-# ===========================
-def daily_post(context):
-    data = get_clean_data()
+# ----------------------
+# Format message
+# ----------------------
+def format_msg(row):
+    title = row.get("Title", "")
+    benefit = row.get("Benefit", "")
+    criteria = row.get("Criteria", "")
+    requirement = row.get("Requirement", "")
+    deadline = row.get("Deadline", "")
+    link = row.get("Link", "")
+
+    txt = f"🎓 *{title}*\n"
+    if benefit:
+        txt += f"📌 Benefit: {benefit}\n"
+    if criteria:
+        txt += f"📌 Criteria: {criteria}\n"
+    if requirement:
+        txt += f"📌 Requirement: {requirement}\n"
+    if deadline:
+        txt += f"⏳ Deadline: {deadline}\n"
+    if link:
+        txt += f"🔗 Apply: {link}\n"
+
+    return txt
+
+# ----------------------
+# Bot Commands (DM ONLY)
+# ----------------------
+@bot.message_handler(commands=["start"])
+def start(m):
+    bot.send_message(
+        m.chat.id,
+        "🤖 *ScoreLaship DM Bot Active!*\n\n"
+        "Use:\n"
+        "`/opportunities` — Get ALL opportunities\n"
+        "`/nigeria` — Nigerian opportunities\n"
+        "`/tech` — Tech opportunities\n"
+        "`/international` — International opportunities\n",
+        parse_mode="Markdown"
+    )
+
+@bot.message_handler(commands=["opportunities"])
+def all_ops(m):
+    data = get_all_data()
     if not data:
+        bot.send_message(m.chat.id, "⚠️ No opportunities found in your Google Sheet.")
         return
 
-    now = datetime.datetime.now().strftime("%Y-%m-%d")
+    bot.send_message(m.chat.id, f"📚 Found {len(data)} opportunities:")
 
-    for item in data:
-        title = item[0]
-        link = item[1]
-        deadline = item[2]
-        category = item[3]
+    for row in data:
+        msg = format_msg(row)
+        bot.send_message(m.chat.id, msg, parse_mode="Markdown", disable_web_page_preview=True)
 
-        text = f"📌 *{title}*\n🔗 {link}\n⏳ Deadline: {deadline}\n🏷 Category: {category}"
+@bot.message_handler(commands=["nigeria", "tech", "international"])
+def filtered_ops(m):
+    category = m.text.replace("/", "").strip().lower()
+    data = get_all_data()
 
-        try:
-            context.bot.send_message(
-                chat_id=GROUP_ID,
-                text=text,
-                parse_mode=ParseMode.MARKDOWN
-            )
-        except Exception as e:
-            logging.error(f"Daily post error: {e}")
+    if not data:
+        bot.send_message(m.chat.id, "⚠️ No opportunities found in your Google Sheet.")
+        return
 
-# ===========================
-#  TEST POST
-# ===========================
-def testpost(update, context):
-    update.message.reply_text("✔ Bot is working!")
+    matches = [r for r in data if similar(r.get("Category", ""), category) > 0.8]
 
-# ===========================
-#  SPAM FILTER
-# ===========================
-def handle_messages(update, context):
-    msg = update.message.text.lower()
-
-    # SPAM DELETION
-    if any(word in msg for word in SPAM_WORDS):
-        try:
-            context.bot.delete_message(
-                chat_id=update.message.chat.id,
-                message_id=update.message.message_id
-            )
-            return
-        except:
-            pass
-
-    # KEYWORD RESPONSE
-    if any(keyword in msg for keyword in KEYWORDS):
-        update.message.reply_text(
-            "Here is a matching opportunity…\n\nUse /testpost to confirm I am active."
+    if not matches:
+        bot.send_message(
+            m.chat.id,
+            f"⚠️ No opportunities available for *{category.title()}*.",
+            parse_mode="Markdown"
         )
+        return
 
-# ===========================
-#  MAIN BOT
-# ===========================
-def main():
-    updater = Updater(BOT_TOKEN, use_context=True)
-    dp = updater.dispatcher
+    bot.send_message(m.chat.id, f"📌 Found {len(matches)} {category.title()} opportunities:")
 
-    dp.add_handler(CommandHandler("testpost", testpost))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_messages))
+    for row in matches:
+        msg = format_msg(row)
+        bot.send_message(m.chat.id, msg, parse_mode="Markdown", disable_web_page_preview=True)
 
-    # Daily job runs at 9:00 AM every day
-    updater.job_queue.run_daily(daily_post, time=datetime.time(hour=9, minute=0))
-
-    updater.start_polling()
-    updater.idle()
-
-if __name__ == "__main__":
-    main()
+# ----------------------
+# Run bot
+# ----------------------
+print("🤖 ScoreLaship DM Bot ACTIVE!")
+bot.infinity_polling()
