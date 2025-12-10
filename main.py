@@ -1,174 +1,154 @@
-#!/usr/bin/env python3
-# ScoreLaship Hub — DM Opportunity Bot
-
-import os
 import json
-import traceback
-import telebot
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime, date
-from dateutil import parser as dateparser
-from difflib import SequenceMatcher
-import pytz
+import logging
+import asyncio
+from datetime import datetime, timedelta
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-# ----------------------
-# CONFIG
-# ----------------------
-TZ = pytz.timezone("Africa/Lagos")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-SA_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")  # JSON text
-SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
+# -----------------------------
+# CONFIGURATION
+# -----------------------------
+BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"     # <-- keep EXACT name
+GROUP_ID = -1001234567890             # <-- your Telegram group ID
+DATA_FILE = "data.json"               # <-- JSON database
 
-bot = telebot.TeleBot(BOT_TOKEN)
+# -----------------------------
+# LOGGING
+# -----------------------------
+logging.basicConfig(
+    format='[%(levelname)s] %(asctime)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-# ----------------------
-# Helpers
-# ----------------------
-def similar(a, b):
-    return SequenceMatcher(None, str(a).lower(), str(b).lower()).ratio()
-
-def truthy(v):
-    s = str(v).strip().lower()
-    return s in ("true", "yes", "1")
-
-def parse_deadline(val):
-    if not val:
-        return None
+# -----------------------------
+# JSON DATABASE FUNCTIONS
+# -----------------------------
+def load_data():
     try:
-        return dateparser.parse(str(val)).date()
-    except:
-        return None
+        with open(DATA_FILE, "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        logger.warning("data.json not found — creating new file.")
+        return {"opportunities": []}
+    except json.JSONDecodeError:
+        logger.error("JSON CORRUPTION ERROR — FIXING FILE…")
+        return {"opportunities": []}
 
-# ----------------------
-# Google Sheet Init
-# ----------------------
-def init_sheet():
+def save_data(data):
     try:
-        svc_info = json.loads(SA_JSON)
+        with open(DATA_FILE, "w") as f:
+            json.dump(data, f, indent=4)
+        logger.info("Data saved successfully.")
     except Exception as e:
-        print("[ERROR] Failed parsing JSON:", e)
-        return None
+        logger.error(f"ERROR SAVING JSON: {e}")
 
-    scope = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive",
-    ]
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(svc_info, scope)
-    client = gspread.authorize(creds)
+# -----------------------------
+# COMMAND: /add
+# Add an opportunity manually.
+# Example:
+# /add Fully funded UK scholarship. Deadline Jan 3.
+# -----------------------------
+async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = " ".join(context.args)
 
-    try:
-        sh = client.open_by_key(SPREADSHEET_ID)
-        print("[OK] Sheet opened")
-        return sh.sheet1
-    except Exception as e:
-        print("[ERROR] Could not open sheet:", e)
-        traceback.print_exc()
-        return None
+    if not message:
+        await update.message.reply_text("❌ Usage: /add opportunity_text_here")
+        return
 
-sheet = init_sheet()
+    data = load_data()
+    data["opportunities"].append(message)
+    save_data(data)
 
-# ----------------------
-# Sheet Utilities
-# ----------------------
-def get_headers_map():
-    if not sheet:
-        return {}
-    headers = sheet.row_values(1)
-    return {h.strip().lower(): i+1 for i, h in enumerate(headers)}
+    await update.message.reply_text("✅ Opportunity added successfully!")
 
-def get_all_data():
-    """Fetch sheet records safely."""
-    if not sheet:
-        return []
-    try:
-        data = sheet.get_all_records()
-        return data
-    except Exception as e:
-        print("[ERROR] get_all_records failed:", e)
-        return []
+# -----------------------------
+# COMMAND: /list
+# Shows all opportunities in JSON.
+# -----------------------------
+async def list_opps(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = load_data()
+    opps = data.get("opportunities", [])
 
-# ----------------------
-# Format message
-# ----------------------
-def format_msg(row):
-    title = row.get("Title", "")
-    benefit = row.get("Benefit", "")
-    criteria = row.get("Criteria", "")
-    requirement = row.get("Requirement", "")
-    deadline = row.get("Deadline", "")
-    link = row.get("Link", "")
+    if not opps:
+        await update.message.reply_text("📭 No opportunities yet.")
+        return
 
-    txt = f"🎓 *{title}*\n"
-    if benefit:
-        txt += f"📌 Benefit: {benefit}\n"
-    if criteria:
-        txt += f"📌 Criteria: {criteria}\n"
-    if requirement:
-        txt += f"📌 Requirement: {requirement}\n"
-    if deadline:
-        txt += f"⏳ Deadline: {deadline}\n"
-    if link:
-        txt += f"🔗 Apply: {link}\n"
+    text = "📢 *Saved Opportunities:*\n\n"
+    for i, opp in enumerate(opps, 1):
+        text += f"{i}. {opp}\n\n"
 
-    return txt
+    await update.message.reply_text(text)
 
-# ----------------------
-# Bot Commands (DM ONLY)
-# ----------------------
-@bot.message_handler(commands=["start"])
-def start(m):
-    bot.send_message(
-        m.chat.id,
-        "🤖 *ScoreLaship DM Bot Active!*\n\n"
-        "Use:\n"
-        "`/opportunities` — Get ALL opportunities\n"
-        "`/nigeria` — Nigerian opportunities\n"
-        "`/tech` — Tech opportunities\n"
-        "`/international` — International opportunities\n",
-        parse_mode="Markdown"
+# -----------------------------
+# COMMAND: /nigeria
+# You can modify this to filter tags later.
+# -----------------------------
+async def nigeria(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = load_data()
+
+    opps = data.get("opportunities", [])
+    if not opps:
+        await update.message.reply_text("🇳🇬 No Nigeria-specific opportunities yet.")
+        return
+
+    await update.message.reply_text("Here are the latest opportunities for Nigeria:")
+    for opp in opps:
+        await update.message.reply_text(opp)
+
+# -----------------------------
+# AUTOMATIC SCHEDULED POSTER
+# Posts in your group DAILY.
+# -----------------------------
+async def scheduled_post(app):
+    while True:
+        data = load_data()
+        opps = data.get("opportunities", [])
+
+        if opps:
+            msg = f"📢 *Daily Scholarship Update ({datetime.now().strftime('%Y-%m-%d')})*\n\n"
+            msg += opps[-1]  # last added opportunity
+
+            try:
+                await app.bot.send_message(
+                    chat_id=GROUP_ID,
+                    text=msg,
+                    parse_mode="Markdown"
+                )
+                logger.info("Auto message sent successfully.")
+            except Exception as e:
+                logger.error(f"FAILED to send auto post: {e}")
+
+        await asyncio.sleep(24 * 60 * 60)  # wait 24 hours
+
+# -----------------------------
+# START COMMAND
+# -----------------------------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "👋 Welcome! Your scholarship bot is active.\n\n"
+        "Use /add to store opportunities.\n"
+        "Use /list to view them.\n"
+        "Use /nigeria to check Nigerian scholarships."
     )
 
-@bot.message_handler(commands=["opportunities"])
-def all_ops(m):
-    data = get_all_data()
-    if not data:
-        bot.send_message(m.chat.id, "⚠️ No opportunities found in your Google Sheet.")
-        return
+# -----------------------------
+# MAIN
+# -----------------------------
+async def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    bot.send_message(m.chat.id, f"📚 Found {len(data)} opportunities:")
+    # Handlers
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("add", add))
+    app.add_handler(CommandHandler("list", list_opps))
+    app.add_handler(CommandHandler("nigeria", nigeria))
 
-    for row in data:
-        msg = format_msg(row)
-        bot.send_message(m.chat.id, msg, parse_mode="Markdown", disable_web_page_preview=True)
+    # Start scheduled posting
+    asyncio.create_task(scheduled_post(app))
 
-@bot.message_handler(commands=["nigeria", "tech", "international"])
-def filtered_ops(m):
-    category = m.text.replace("/", "").strip().lower()
-    data = get_all_data()
+    logger.info("BOT RUNNING...")
+    await app.run_polling()
 
-    if not data:
-        bot.send_message(m.chat.id, "⚠️ No opportunities found in your Google Sheet.")
-        return
-
-    matches = [r for r in data if similar(r.get("Category", ""), category) > 0.8]
-
-    if not matches:
-        bot.send_message(
-            m.chat.id,
-            f"⚠️ No opportunities available for *{category.title()}*.",
-            parse_mode="Markdown"
-        )
-        return
-
-    bot.send_message(m.chat.id, f"📌 Found {len(matches)} {category.title()} opportunities:")
-
-    for row in matches:
-        msg = format_msg(row)
-        bot.send_message(m.chat.id, msg, parse_mode="Markdown", disable_web_page_preview=True)
-
-# ----------------------
-# Run bot
-# ----------------------
-print("🤖 ScoreLaship DM Bot ACTIVE!")
-bot.infinity_polling()
+if __name__ == "__main__":
+    asyncio.run(main())
