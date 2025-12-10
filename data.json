@@ -1,3 +1,16 @@
 {
-  "opportunities": []
+  "opportunities": [
+    {
+      "category": "nigeria",
+      "text": "🇳🇬 Fully funded Nigerian scholarship in Biomedical Engineering. Deadline Feb 2026. Apply: https://example.com"
+    },
+    {
+      "category": "tech",
+      "text": "🌍 Tech scholarship for international students in AI. Deadline Mar 2026. Apply: https://example.com"
+    },
+    {
+      "category": "international",
+      "text": "🌍 Fully funded Masters scholarship in Netherlands. Deadline Apr 2026. Apply: https://example.com"
+    }
+  ]
 }
